@@ -21,65 +21,25 @@ if ! command -v nmcli >/dev/null 2>&1; then
     exit 1
 fi
 
-# ------------------------------------------------------------
-#  3️⃣ Ask the user for the folder that contains the .ovpn files
-# ------------------------------------------------------------
-read -rp "📂  Enter the full path to the folder with the imported .ovpn files: " OVPN_DIR
+# Command to save VPN connections to a temporary file
+sudo nmcli connection show | grep vpn > /dev/shm/list.txt
 
-# Trim possible trailing slash for nicer messages
-OVPN_DIR="${OVPN_DIR%/}"
+# Read each line from the list.txt
+while IFS= read -r line
+do
+    # Extract the first field (VPN name)
+    vpn_name=$(echo "$line" | awk '{print $1}')
 
-# Validate the directory
-if [[ ! -d "$OVPN_DIR" ]]; then
-    echo "❌  Directory '$OVPN_DIR' does not exist or is not accessible." >&2
-    exit 1
-fi
-
-# ------------------------------------------------------------
-#  4️⃣ Helper: delete a NetworkManager connection if it exists
-# ------------------------------------------------------------
-remove_nm_connection() {
-    local conn_name="$1"
-
-    # Does the connection exist in NetworkManager?
-    if nmcli -g NAME connection show | grep -Fxq "$conn_name"; then
-        echo "🗑️  Removing NMCLI connection: $conn_name"
-
-        # Try a straightforward delete first
-        if nmcli connection delete "$conn_name" >/dev/null 2>&1; then
-            echo "   → Deleted successfully."
-            return
-        fi
-
-        # If it failed (most likely because it is active), bring it down then delete
-        echo "   → Deletion failed – attempting to bring the connection down first..."
-        nmcli connection down "$conn_name" >/dev/null 2>&1
-        if nmcli connection delete "$conn_name" >/dev/null 2>&1; then
-            echo "   → Deleted after being brought down."
+    # Check if vpn_name is not empty
+    if [ -n "$vpn_name" ]; then
+        # Execute the delete command
+        echo "Deleting connection: $vpn_name"
+        if sudo nmcli connection delete "$vpn_name"; then
+            echo "Successfully deleted: $vpn_name"
         else
-            echo "   → Could not delete '$conn_name'. Please investigate manually."
+            echo "Failed to delete: $vpn_name"
         fi
-    else
-        echo "ℹ️  No NetworkManager connection named '$conn_name' – nothing to do."
     fi
-}
-
-# ------------------------------------------------------------
-#  5️⃣ Process every .ovpn file in the supplied folder
-# ------------------------------------------------------------
-shopt -s nullglob   # makes the loop skip if no matches
-found_any=false
-
-for ovpn_file in "$OVPN_DIR"/*.ovpn; do
-    found_any=true
-    # Derive the expected NM connection name from the filename (strip path & .ovpn)
-    conn_name="$(basename "$ovpn_file" .ovpn)"
-    echo "🔎  Processing file: $ovpn_file → expected connection name: $conn_name"
-    remove_nm_connection "$conn_name"
-done
-
-if ! $found_any; then
-    echo "⚠️  No *.ovpn files found in '$OVPN_DIR'."
-fi
-
-echo "✅  Cleanup finished."
+done < /dev/shm/list.txt
+sudo rm -rf /dev/shm/list.txt
+echo
